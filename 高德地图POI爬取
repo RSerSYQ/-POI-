@@ -52,22 +52,6 @@ def querys(filepath):
         return category
 
 def build_url(sql_result,query,page_num, offset='20',a='all',output='json', ak=ak):
-	# """
-	#  :param query: 检索关键字
-	#  :param bounds: 检索矩形区域，多组坐标间以","分隔
-	#          38.76623,116.43213,39.54321,116.46773
-	#          lat,lng(左下角坐标),lat,lng(右上角坐标)
-	#  :param output: 输出格式为json或者xml
-	#  :param scope: 检索结果详细程度。取值为1 或空，则返回基本信息；取值为2，返回检索POI详细信息
-	#  :param coord_type: 坐标类型，
-	#          1（wgs84ll即GPS经纬度），
-	#          2（gcj02ll即国测局经纬度坐标），
-	#          3（bd09ll即百度经纬度坐标），
-	#          4（bd09mc即百度米制坐标）
-	#  :param page_size:
-	#  :param page_num:
-	#  :return:
-	#  """
 	#构造url
     bounds = build_bounds(sql_result)
     url = r'http://restapi.amap.com/v3/place/polygon?'
@@ -88,29 +72,6 @@ def over_times(json_page):
     if status == '0':
         return True
     else:
-        return False
-
-def mkdir(path):
-    # 引入模块
-    import os
-    # 去除首位空格
-    path=path.strip()
-    # 去除尾部 \ 符号
-    path=path.rstrip("\\")
-
-    # 判断路径是否存在
-    # 存在     True
-    # 不存在   False
-    isExists=os.path.exists(path)
-    # 判断结果
-    if not isExists:
-        # 如果不存在则创建目录
-        os.makedirs(path)
-        print(path+' 创建成功')
-        return True
-    else:
-        # 如果目录存在则不创建，并提示目录已存在
-        print(path+' 目录已存在')
         return False
 		
 def sql_queryover(sql_result):
