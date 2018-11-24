@@ -117,7 +117,7 @@ def sql_queryover(sql_result):
 	#之前的queried更新为1的意义在于确实检索到了此条矩形区域经纬度记录，
 	#而此函数是在此矩形区域检索遍历完所有POI类别后，将queryover字段更新为1，意义是在数据库中记录此矩形区域经纬度记录是否真正检索完所有类别
     fid = sql_result[0][0]
-    conn = pymssql.connect('127.0.0.1','rser', '0634666', 'syq')
+    conn = pymssql.connect('连接数据库')
     cur = conn.cursor()
     cur.execute('update [dbo].[guangzhouboundtest] set queryover = 1 where fid = {0}'.format(fid))
     print('record fid {0} is query over'.format(fid))
@@ -225,7 +225,7 @@ def requestMethod(url,get_page_num,item,sql_result,num):
         print(m)
         print(s)
         print(json_page["count"])
-        conn = pymssql.connect('127.0.0.1','rser', '0634666', 'syq')
+        conn = pymssql.connect('链接数据库')
         time.sleep(0.5)
         cur = conn.cursor()
         i=0
