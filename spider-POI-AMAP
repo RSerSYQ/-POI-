@@ -1,0 +1,319 @@
+#encoding=utf-8
+from urllib import request, parse
+import urllib
+import csv
+import json
+import time
+import pymssql
+import codecs
+
+ak="your key"
+#http://restapi.amap.com/v3/place/polygon?polygon=116.460988,40.006919;116.48231,40.007381;116.47516,39.99713;116.472596,39.985227;116.45669,39.984989;116.460988,40.006919&keywords=商务住宅&output=json&key=""
+def sql_select_bounds():
+	#此函数作用：逐条读取事先录入数据库中的边界经纬度，每读到一条记录将queried更新为1(表示此条记录在数据库中被选择过)，同时返回左下角、右上角经纬度值，
+	#以便下一步构建url请求中的空间范围
+    conn = pymssql.connect('连接你的数据库')
+    cur = conn.cursor()
+    cur.execute('select top 1* from [dbo].[guangzhouboundtest] where queried = 0')
+    # cur.execute('select top 1 * from [dbo].[boundstest] where fid = 4132000')
+    result = cur.fetchall()
+    print(result[0][1],result[0][2])
+    fid = result[0][0]
+    cur.execute('update [dbo].[guangzhouboundtest] set queried = 1 where fid = {0}'.format(fid))
+    conn.commit()
+    print('selected one record.the fid is {0}'.format(fid))
+    cur.close()
+    conn.close()
+    print(result)
+    return result
+
+def build_bounds(sql_result):
+	#因为构建的url为字符串，故应对经纬度进行str类型转换，返回矩形区域范围的字符串形式
+    left_x = str(sql_result[0][2])
+    up_y= str(sql_result[0][3])
+    right_x= str(sql_result[0][4])
+    bot_y= str(sql_result[0][1])
+    bounds=left_x+','+up_y+';'+right_x+','+bot_y
+    return bounds
+
+def querys(filepath):
+    # """
+    # 生成url中的query参数
+    # :param filepath:
+    # :return: list of category
+    # """
+	#此函数：遍历POI分类表中的所有分类，在构建url时作为参数之一，进行相应检索，如中餐馆、银行等等，此函数返回POI所有类别的列表
+    with open(filepath, encoding='utf8') as csvfile:
+        readCSV = csv.reader(csvfile, delimiter=',')
+        category = []
+        for row in readCSV:
+            for item in row:
+                category.append(item)
+        return category
+
+def build_url(sql_result,query,page_num, offset='20',a='all',output='json', ak=ak):
+	# """
+	#  :param query: 检索关键字
+	#  :param bounds: 检索矩形区域，多组坐标间以","分隔
+	#          38.76623,116.43213,39.54321,116.46773
+	#          lat,lng(左下角坐标),lat,lng(右上角坐标)
+	#  :param output: 输出格式为json或者xml
+	#  :param scope: 检索结果详细程度。取值为1 或空，则返回基本信息；取值为2，返回检索POI详细信息
+	#  :param coord_type: 坐标类型，
+	#          1（wgs84ll即GPS经纬度），
+	#          2（gcj02ll即国测局经纬度坐标），
+	#          3（bd09ll即百度经纬度坐标），
+	#          4（bd09mc即百度米制坐标）
+	#  :param page_size:
+	#  :param page_num:
+	#  :return:
+	#  """
+	#构造url
+    bounds = build_bounds(sql_result)
+    url = r'http://restapi.amap.com/v3/place/polygon?'
+    url += 'polygon=' + bounds
+    url += '&keywords='+ query
+    url+='&offset'+offset
+	#offset为对每页json的POI记录条数设置，如设置每页json返回20条记录
+    url+='&page='+page_num
+    url+='&extensions='+a
+    url += '&output=' + output
+    url += '&key=' + ak
+    url = parse.quote(url, safe='/:?=&,!*();:+%#[]')
+    return url
+
+
+def over_times(json_page):
+    status = json_page['status']
+    if status == '0':
+        return True
+    else:
+        return False
+
+def mkdir(path):
+    # 引入模块
+    import os
+    # 去除首位空格
+    path=path.strip()
+    # 去除尾部 \ 符号
+    path=path.rstrip("\\")
+
+    # 判断路径是否存在
+    # 存在     True
+    # 不存在   False
+    isExists=os.path.exists(path)
+    # 判断结果
+    if not isExists:
+        # 如果不存在则创建目录
+        os.makedirs(path)
+        print(path+' 创建成功')
+        return True
+    else:
+        # 如果目录存在则不创建，并提示目录已存在
+        print(path+' 目录已存在')
+        return False
+		
+def sql_queryover(sql_result):
+	#之前的queried更新为1的意义在于确实检索到了此条矩形区域经纬度记录，
+	#而此函数是在此矩形区域检索遍历完所有POI类别后，将queryover字段更新为1，意义是在数据库中记录此矩形区域经纬度记录是否真正检索完所有类别
+    fid = sql_result[0][0]
+    conn = pymssql.connect('127.0.0.1','rser', '0634666', 'syq')
+    cur = conn.cursor()
+    cur.execute('update [dbo].[guangzhouboundtest] set queryover = 1 where fid = {0}'.format(fid))
+    print('record fid {0} is query over'.format(fid))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+def requestMethod(url,get_page_num,item,sql_result,num):
+	#此函数接收url,get_page_num,item,sql_result,num五个参数，参数url即为构造好的url，而get_page_num为bool类型，后三个参数是在生成本地json文件进行命名时才会用到
+    if get_page_num:
+        try:
+            req = request.Request(url)
+            page = request.urlopen(req).read()
+            page = page.decode('utf8')
+            json_page = json.loads(page)
+            if over_times(json_page):
+                print('over times!')
+                return -1
+            else:
+                tatal = int(json_page['count'])
+                if tatal == 0:
+                    print('no info')
+                    return -2
+                else:
+                    import math
+                    return math.ceil(tatal/20)
+        except:
+            print("xxx")
+		#若接收的get_page_num为true，则尝试读取在每页json20条记录的前提下，共有多少页json，返回页数
+    else:
+        mkpath="E:/JSON1/{0}/{1}".format(sql_result[0][0],item)
+        mkdir(mkpath)
+        req = request.Request(url)
+        page = request.urlopen(req).read()
+        page = page.decode('utf8')
+        json_page = json.loads(page)
+        name='{}_{}_{}'.format(sql_result[0][0],item,num)
+        file=open(mkpath+'\\'+name+'.json','w',encoding='utf8')
+        json.dump(json_page,file,ensure_ascii=False)
+        file.close()
+        lists=[]
+        s=[]
+        m=0;
+        for e in json_page["pois"]:
+		#在json文件中pois字段里进行遍历，e即为每条POI记录，e中含有name，id等POI信息的值
+            m=m+1
+            id=e['id']
+            name=e['name']
+            try:
+                address=str(e['address'])
+            except:address=""
+            try:
+                tel=str(e['tel'])
+            except:tel=""
+            try:
+                type=str(e['type'])
+            except:type=""
+            try:
+                pname=str(e['pname'])
+            except:
+                pname=""
+            try:
+                cityname=str(e['cityname'])
+            except:
+                cityname=""
+            try:
+                adname=str(e['adname'])
+            except:
+                adname=""
+            try:
+                rating=str(e['biz_ext']['rating'])
+            except:
+                rating=str(e['biz_ext'])
+            try:
+                cost=str(e['biz_ext']['cost'])
+            except:cost=str(e['biz_ext'])
+            try:
+                location=str(e['location'])
+                lng=float(location.split(',')[0])
+                lat=float(location.split(',')[1])
+            except:
+                lng=""
+                lat=""
+            try:
+                lowest_price=str(e['biz_ext']['lowest_price'])
+            except:
+                lowest_price="[]"
+            try:
+                cpid=str(e['indoor_data']['cpid'])
+            except:
+                cpid=""
+            try:
+                floor=str(e['indoor_data']['floor'])
+            except:
+                floor=""
+            try:
+                truefloor=str(e['indoor_data']['truefloor'])
+            except:
+                truefloor=""
+			#若接收的get_page_num为False，则对json文件进行真正的请求读取，获取API返回的字段
+            #以上try-except为对各个字段的值进行异常控制，防止因字段值为空而使后续录入数据库的过程中报错
+            lists=[id,name,address,tel,type,rating,cost,lowest_price,cpid,floor,truefloor,pname,cityname,adname,lng,lat]
+            s.append(lists)
+			#将读取到的name,lat,lng,address,uid,type,tag,price,overall_rating,comment_num存入列表
+        print(m)
+        print(s)
+        print(json_page["count"])
+        conn = pymssql.connect('127.0.0.1','rser', '0634666', 'syq')
+        time.sleep(0.5)
+        cur = conn.cursor()
+        i=0
+        for i in range(m):
+            try:
+                cur.execute("INSERT INTO [dbo].[guangzhoupois] VALUES (%s,%s, %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",(s[i][0],s[i][1],s[i][2],s[i][3],s[i][4],s[i][5],s[i][6],s[i][7],s[i][8],s[i][9],s[i][10],s[i][11],s[i][12],s[i][13],s[i][14],s[i][15]))
+            #guangzhoupoitest即为数据库中用来存放POI记录相关字段值的数据库表，此表的主键为id
+			except:
+                cur.execute("INSERT INTO [dbo].[guangzhouerrolist] VALUES (%s,%s, %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",(s[i][0],s[i][1],s[i][2],s[i][3],s[i][4],s[i][5],s[i][6],s[i][7],s[i][8],s[i][9],s[i][10],s[i][11],s[i][12],s[i][13],s[i][14],s[i][15]))
+			#若字段经异常处理后仍然插入不到表中，则插入一个新表中，此表的所有字段构成了表的主键
+		conn.commit()
+        cur.close()
+        conn.close()
+
+x=0
+m=[]
+for x in range(8168):
+#8168为广州市8168块矩形区域
+    time.sleep(1)
+    print("矩形区域{0}".format(x))
+    sql_result = sql_select_bounds()
+    # bound=build_bounds(sql_result)
+    # print(bound)
+    category = querys("E:\data\jun\poi\高德POI相关\pois.csv")
+    #生成行业的list
+    count=0
+    for item in category:
+        count=count+1
+        if count==123:
+        #根据poi类别个数设置count控制循环
+		#假如一块矩形区域循环完了123次，则调用sql_queryover方法，并结束此循环，进行下一块矩形区域的检索
+            sql_queryover(sql_result)
+            break;
+        else:
+		#假如没有循环123次，则调用build_url方法来构造包含矩形区域经纬度、POI分类等字段的url
+			url = build_url(sql_result,
+					query=item,
+					page_num='0'
+					)
+            print(item)
+            print(count)
+            page_num = requestMethod(url,True,item,sql_result,num=1)
+            print(page_num)
+            # print(range(page_num))
+			if page_num == -1:
+			#requestMethod函数返回-1的时候是请求超时的情况，exit()会退出循环
+				exit()
+			elif page_num==-2:
+			#当requestMethod函数返回值为-2，是出现空值的情况
+				print("空值")
+			else:
+			#当既不是空值，也不超时情况下，进行真正的json访问，调用requestMethod方法，逐页读取POI记录，并写入数据库
+				print("xxx")
+				print(page_num)
+				print("xxx")
+				if page_num==1:
+					num=0
+					for num in range(page_num):
+						real_url = build_url(sql_result,
+											query=item,
+											page_num=str(num))
+						print("仅1页")
+						requestMethod(real_url,False,item,sql_result,num=1)
+						print("成功！")
+						time.sleep(0.5)
+				elif page_num>1:
+					num=1
+					for num in range(1,page_num+1):
+						real_url = build_url(sql_result,
+											query=item,
+											page_num=str(num))
+						print(real_url)
+						requestMethod(real_url,False,item,sql_result,num)
+						time.sleep(0.5)
+						print("多页，这是第{0}页".format(num))
+						print("成功！")
+            except:
+			#当发生异常情况时，将url逐条记录到一个txt中，后期进行进一步处理
+                x=0
+                print(url)
+                m.append(url)
+                for k in m:
+                    x=x+1
+                    if x>=2:
+                        f = codecs.open("E:\data\jun\poi\高德POI相关\errorurl.txt",'a','utf8')
+                        for i in m:
+                            f.write(str(i)+'\r\n')  #\r\n为换行符
+                        f.close()
+                        m=[]
+                    else:
+                        continue;
