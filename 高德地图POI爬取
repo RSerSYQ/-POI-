@@ -1,3 +1,6 @@
+*.js linguist-language=python
+*.css linguist-language=python
+*.html linguist-language=python
 #encoding=utf-8
 from urllib import request, parse
 import urllib
